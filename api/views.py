@@ -1,69 +1,66 @@
-from rest_framework.decorators import api_view
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.views import APIView
-import pandas as pd
-import os
-from django.http import JsonResponse
-from .models import User
-from .serializer import UserSerializer
+from pymongo import MongoClient
 from sklearn.decomposition import NMF
 from sklearn.preprocessing import LabelEncoder
+import pandas as pd
+from django.http import JsonResponse
+from rest_framework.views import APIView
 
-@api_view(['GET'])
-def get_users(request):
-    users = User.objects.all()
-    serializer = UserSerializer(users, many=True)
-    return Response(serializer.data)
-
-@api_view(['POST'])
-def create_user(request): 
-    serializer = UserSerializer(data=request.data)
-    if serializer.is_valid(): 
-        serializer.save()
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-@api_view(['GET', 'PUT', 'DELETE'])
-def user_detail (request, pk):
-    try:
-        user = User.objects.get(pk=pk)
-    except User.DoesNotExist:
-        return Response(status=status.HTTP_404_NOT_FOUND)
-    
-    if request.method == 'GET':
-        serializer = UserSerializer(user)
-        return Response(serializer.data)
-    
 class RecommendationView(APIView):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         
-        # Đường dẫn tới file train_data.csv
-        data_path = os.path.join(os.path.dirname(__file__), "train_data.csv")
+        # Kết nối tới MongoDB Atlas
+        client = MongoClient(
+            "mongodb+srv://datvan635:GXnsBWtxBCFR9I93@book-wise.scywq.mongodb.net/book-wise?retryWrites=true&w=majority"
+        )
         
-        # Load dữ liệu và gán tên cột
-        data = pd.read_csv(data_path, header=None, names=["UserID", "ProductID", "Rating"])
+        # Lấy database và collection
+        db = client["book-wise"]  # Tên database
+        ratings_collection = db["reviews"]  # Collection lưu ratings
+        books_collection = db["books"]  # Collection lưu thông tin sách
         
+        # Lấy dữ liệu ratings từ MongoDB
+        ratings_data = list(ratings_collection.find({"is_deleted": False}, {"_id": 0}))
+        if not ratings_data:
+            raise ValueError("Không có dữ liệu ratings trong MongoDB để huấn luyện!")
+        
+        # Chuyển dữ liệu thành DataFrame
+        data = pd.DataFrame(ratings_data).rename(columns={"book_id": "book_id"})
+        data = data[data["rating"].notnull()]  # Loại bỏ giá trị null
+        data = data[data["rating"].apply(lambda x: isinstance(x, (int, float)))]  # Chỉ giữ giá trị số
+
+        # Chuyển đổi rating sang kiểu float để đảm bảo số thực có thể được xử lý
+        data["rating"] = data["rating"].astype(float)
         # Xử lý các bản ghi trùng lặp bằng cách tính trung bình
-        data = data.groupby(["UserID", "ProductID"], as_index=False).mean()
-        
-        # Mã hóa UserID và ProductID thành các giá trị số
+        data = data.groupby(["user_id", "book_id"], as_index=False)["rating"].mean()
+
+        # Mã hóa user_id và book_id thành các giá trị số
         self.user_encoder = LabelEncoder()
         self.product_encoder = LabelEncoder()
-        data["UserID"] = self.user_encoder.fit_transform(data["UserID"])
-        data["ProductID"] = self.product_encoder.fit_transform(data["ProductID"])
+        data["user_id"] = self.user_encoder.fit_transform(data["user_id"])
+        data["book_id"] = self.product_encoder.fit_transform(data["book_id"])
         
         # Tạo utility matrix
-        self.utility_matrix = data.pivot(index="UserID", columns="ProductID", values="Rating").fillna(0)
+        self.utility_matrix = data.pivot(index="user_id", columns="book_id", values="rating").fillna(0)
         
         # Huấn luyện mô hình MF (NMF)
-        self.model = NMF(n_components=10, init="random", random_state=42)
+        # Huấn luyện mô hình MF (NMF)
+        self.model = NMF(
+        n_components=15,         # Bắt đầu với 10 latent factors
+        init="nndsvd",           # Khởi tạo thông minh
+        max_iter=500,            # Số vòng lặp tối đa
+        random_state=42,         # Đảm bảo tái lập
+        beta_loss="frobenius",   # Hàm mất mát mặc định
+        ) 
         self.user_features = self.model.fit_transform(self.utility_matrix)
         self.item_features = self.model.components_
+        
+        # Lấy thông tin chi tiết sách từ MongoDB
+        books_data = list(books_collection.find({}, {"_id": 0}))
+        self.book_data = pd.DataFrame(books_data)
 
     def get_recommendations(self, user_id):
-        # Chuyển UserID từ dạng mã hoá sang dạng chỉ mục của ma trận
+        # Chuyển user_id từ dạng mã hoá sang dạng chỉ mục của ma trận
         try:
             user_idx = self.user_encoder.transform([user_id])[0]
         except ValueError:
@@ -73,13 +70,14 @@ class RecommendationView(APIView):
         user_ratings = self.user_features[user_idx].dot(self.item_features)
         
         # Lấy các sản phẩm có xếp hạng dự đoán cao nhất
-        recommended_products = (-user_ratings).argsort()[:20]  # Lấy 5 gợi ý hàng đầu
+        recommended_products = (-user_ratings).argsort()[:20]  # Lấy 20 gợi ý hàng đầu
         product_ids = self.product_encoder.inverse_transform(recommended_products)
         
-        # Chuyển đổi product_ids thành kiểu int để JSON serializable
-        return [int(product_id) for product_id in product_ids]
+        # Lọc thông tin sách từ `book_data`
+        recommended_books = self.book_data[self.book_data["book_id"].isin(product_ids)]
+        return recommended_books.to_dict(orient="records")
 
     def get(self, request, user_id):
         # Gọi hàm get_recommendations để lấy danh sách gợi ý
-        recommendations = self.get_recommendations(int(user_id))
-        return JsonResponse({"recommended_products": recommendations})
+        recommendations = self.get_recommendations((user_id))
+        return JsonResponse({"recommended_books": recommendations})
