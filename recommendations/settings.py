@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 
 from pathlib import Path
+import os
 
 from pymongo import MongoClient
 
@@ -31,7 +32,7 @@ DEBUG = True
 
 ALLOWED_HOSTS = ['*']
 
-PORT = 8000
+PORT = os.environ.get('PORT', '8000')
 # Application definition
 
 INSTALLED_APPS = [
