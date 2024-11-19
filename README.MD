@@ -1,5 +1,5 @@
 
-`pip install requirement.txt`
+`pip install -r requirements.txt`
 
 
 `python manage.py runserver`

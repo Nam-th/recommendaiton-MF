@@ -74,7 +74,13 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'recommendations.wsgi.application'
-
+INSTALLED_APPS = [
+    "corsheaders",
+]
+MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
+]
+CORS_ALLOW_ALL_ORIGINS = True
 
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
