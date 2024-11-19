@@ -42,7 +42,8 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
-    'api'
+    'api',
+    "corsheaders",
 ]
 
 MIDDLEWARE = [
@@ -53,6 +54,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
 ]
 
 ROOT_URLCONF = 'recommendations.urls'
@@ -74,12 +76,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'recommendations.wsgi.application'
-INSTALLED_APPS = [
-    "corsheaders",
-]
-MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",
-]
+
 CORS_ALLOW_ALL_ORIGINS = True
 
 # Database
